@@ -1,6 +1,6 @@
 name: "PowerSync Optimiser"
 description: "ML-based battery optimization engine for PowerSync"
-version: "1.0.5"
+version: "1.0.6"
 slug: "powersync_optimiser"
 url: "https://github.com/bolagnaise/powersync-optimiser"
 arch:
@@ -9,6 +9,7 @@ arch:
   - armv7
 startup: "application"
 boot: "auto"
+init: false
 homeassistant_api: true
 hassio_api: true
 auth_api: true
