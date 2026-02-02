@@ -29,10 +29,6 @@ RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
 # Copy application code
 COPY optimiser/ ./optimiser/
-COPY run.sh .
 
-# Make run script executable
-RUN chmod a+x run.sh
-
-# Run the optimiser server
-CMD [ "/app/run.sh" ]
+# Copy s6-overlay service configuration
+COPY rootfs /
