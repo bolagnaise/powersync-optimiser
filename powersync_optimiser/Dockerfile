@@ -9,7 +9,9 @@ RUN apk add --no-cache \
     build-base \
     python3-dev \
     cmake \
-    git
+    git \
+    gfortran \
+    openblas-dev
 
 # Create app directory
 WORKDIR /app
@@ -18,7 +20,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
 # Copy application code
 COPY optimiser/ ./optimiser/

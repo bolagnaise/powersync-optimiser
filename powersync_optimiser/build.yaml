@@ -1,0 +1,4 @@
+build_from:
+  amd64: ghcr.io/hassio-addons/base:15.0.8
+  aarch64: ghcr.io/hassio-addons/base:15.0.8
+  armv7: ghcr.io/hassio-addons/base:15.0.8
