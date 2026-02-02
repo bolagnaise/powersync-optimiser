@@ -1,6 +1,9 @@
 ARG BUILD_FROM=ghcr.io/hassio-addons/base:15.0.8
 FROM ${BUILD_FROM}
 
+# Update base packages first to avoid musl version conflicts
+RUN apk update && apk upgrade --no-cache
+
 # Install build dependencies for cvxpy
 RUN apk add --no-cache \
     python3 \
