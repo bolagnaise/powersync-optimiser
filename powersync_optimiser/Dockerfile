@@ -1,8 +1,10 @@
-ARG BUILD_FROM=ghcr.io/hassio-addons/base:15.0.8
+ARG BUILD_FROM=ghcr.io/hassio-addons/base:16.3.2
 FROM ${BUILD_FROM}
 
-# Update base packages first to avoid musl version conflicts
-RUN apk update && apk upgrade --no-cache
+# Remove musl version lock and upgrade all packages
+RUN sed -i '/^musl=/d' /etc/apk/world && \
+    apk update && \
+    apk upgrade --no-cache --available
 
 # Install build dependencies for cvxpy
 RUN apk add --no-cache \
