@@ -474,6 +474,16 @@ class BatteryOptimiser:
         if cfg.max_grid_export_w is not None:
             constraints.append(grid_export <= cfg.max_grid_export_w)
 
+        # Self-consumption mode: only allow grid-to-battery charging when electricity is free/negative
+        # Battery should charge from excess solar, or from grid when price <= 0
+        if cfg.cost_function == CostFunction.SELF_CONSUMPTION:
+            for t in range(n_intervals):
+                if p_import[t] > 0:
+                    # Price is positive - don't charge from grid
+                    constraints.append(grid_to_battery[t] == 0)
+                # else: price <= 0, allow charging (it's free or they pay us!)
+            _LOGGER.info("Self-consumption mode: grid charging only when price <= 0")
+
         # ========================================
         # OBJECTIVE FUNCTION
         # ========================================
@@ -736,7 +746,15 @@ class BatteryOptimiser:
             gtb = 0.0  # Grid to battery
 
             # Low import price - charge from grid
-            if prices_import[t] < avg_import * 0.7 and current_soc < cfg.max_soc - 0.1:
+            # In self_consumption mode, only charge when price <= 0 (free/negative)
+            # In other modes, charge when price is low
+            should_charge_from_grid = False
+            if cfg.cost_function == CostFunction.SELF_CONSUMPTION:
+                should_charge_from_grid = prices_import[t] <= 0
+            else:
+                should_charge_from_grid = prices_import[t] < avg_import * 0.7
+
+            if should_charge_from_grid and current_soc < cfg.max_soc - 0.1:
                 available_capacity = (cfg.max_soc - current_soc) * capacity_wh / dt_hours
                 gtb = min(cfg.max_charge_w, available_capacity) - remaining_solar
                 gtb = max(0, gtb)
