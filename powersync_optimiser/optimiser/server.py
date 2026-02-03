@@ -22,25 +22,18 @@ REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", 60))  # 60 second defaul
 _timeout_executor = ThreadPoolExecutor(max_workers=2)
 
 
-def with_timeout(timeout_seconds):
+def run_with_timeout(func, args=(), kwargs=None, timeout_seconds=REQUEST_TIMEOUT):
     """
-    Decorator to add timeout to a function.
+    Run a function with a timeout.
 
     Uses concurrent.futures instead of signals to work in Flask worker threads.
+    IMPORTANT: The function should NOT use Flask request context (request, jsonify).
+    Extract data from the request BEFORE calling this, and build the response AFTER.
     """
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            future = _timeout_executor.submit(func, *args, **kwargs)
-            try:
-                return future.result(timeout=timeout_seconds)
-            except FuturesTimeoutError:
-                return jsonify({
-                    "success": False,
-                    "error": f"Optimization timed out after {timeout_seconds} seconds",
-                }), 504
-        return wrapper
-    return decorator
+    if kwargs is None:
+        kwargs = {}
+    future = _timeout_executor.submit(func, *args, **kwargs)
+    return future.result(timeout=timeout_seconds)  # Raises FuturesTimeoutError on timeout
 
 # Configure logging
 log_level = os.environ.get("LOG_LEVEL", "info").upper()
@@ -60,7 +53,7 @@ optimiser = BatteryOptimiser()
 # Configuration from environment
 OPTIMIZATION_INTERVAL = int(os.environ.get("OPTIMIZATION_INTERVAL", 5))
 HORIZON_HOURS = int(os.environ.get("HORIZON_HOURS", 48))
-DEFAULT_COST_FUNCTION = os.environ.get("DEFAULT_COST_FUNCTION", "cost")
+DEFAULT_COST_FUNCTION = os.environ.get("DEFAULT_COST_FUNCTION", "self_consumption")
 
 
 @app.route("/health", methods=["GET"])
@@ -88,7 +81,6 @@ def status():
 
 
 @app.route("/optimize", methods=["POST"])
-@with_timeout(REQUEST_TIMEOUT)
 def optimize():
     """
     Run optimization with provided data.
@@ -124,6 +116,8 @@ def optimize():
         }), 503
 
     try:
+        # IMPORTANT: Extract all data from request in the main thread (before timeout handling)
+        # Flask's request context is thread-local and won't work in executor threads
         data = request.get_json()
         if not data:
             return jsonify({"success": False, "error": "No data provided"}), 400
@@ -189,16 +183,28 @@ def optimize():
             avg_load = sum(load_forecast) / len(load_forecast) if load_forecast else 1000
             load_forecast = load_forecast + [avg_load] * (n_intervals - len(load_forecast))
 
-        # Run optimization
+        # Run optimization WITH TIMEOUT
+        # Only the optimize() call runs in the executor - it doesn't need Flask context
         logger.info(f"Running optimization: {len(prices_import)} intervals, SOC={current_soc:.1%}")
-        result = optimiser.optimize(
-            prices_import=prices_import[:n_intervals],
-            prices_export=prices_export[:n_intervals],
-            solar_forecast=solar_forecast[:n_intervals],
-            load_forecast=load_forecast[:n_intervals],
-            initial_soc=current_soc,
-            config=config,
-        )
+        try:
+            result = run_with_timeout(
+                optimiser.optimize,
+                kwargs={
+                    "prices_import": prices_import[:n_intervals],
+                    "prices_export": prices_export[:n_intervals],
+                    "solar_forecast": solar_forecast[:n_intervals],
+                    "load_forecast": load_forecast[:n_intervals],
+                    "initial_soc": current_soc,
+                    "config": config,
+                },
+                timeout_seconds=REQUEST_TIMEOUT,
+            )
+        except FuturesTimeoutError:
+            logger.warning(f"Optimization timed out after {REQUEST_TIMEOUT} seconds")
+            return jsonify({
+                "success": False,
+                "error": f"Optimization timed out after {REQUEST_TIMEOUT} seconds",
+            }), 504
 
         if not result.success:
             logger.warning(f"Optimization failed: {result.status}")
@@ -207,7 +213,7 @@ def optimize():
                 "error": result.status,
             }), 500
 
-        # Build response
+        # Build response in main thread (jsonify needs Flask app context)
         logger.info(f"Optimization succeeded: cost=${result.total_cost:.2f}, "
                    f"import={result.total_import_kwh:.1f}kWh, export={result.total_export_kwh:.1f}kWh")
 
