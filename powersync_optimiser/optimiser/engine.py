@@ -354,14 +354,17 @@ class BatteryOptimiser:
         # Solve the problem
         problem = cp.Problem(objective, constraints)
 
+        # Solver timeout in seconds (prevent long-running optimizations)
+        SOLVER_TIMEOUT = 30
+
         # Try HiGHS first, fall back to other solvers
         solver_name = "HIGHS"
         try:
             if "HIGHS" in cp.installed_solvers():
-                problem.solve(solver=cp.HIGHS, verbose=False)
+                problem.solve(solver=cp.HIGHS, verbose=False, time_limit=SOLVER_TIMEOUT)
             else:
-                # Fall back to available solver
-                problem.solve(verbose=False)
+                # Fall back to available solver with timeout
+                problem.solve(verbose=False, solver_opts={"time_limit": SOLVER_TIMEOUT})
                 solver_name = "default"
         except Exception as e:
             _LOGGER.warning(f"Primary solver failed: {e}, trying fallback")
