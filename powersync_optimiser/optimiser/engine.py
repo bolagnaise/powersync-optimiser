@@ -407,41 +407,70 @@ class BatteryOptimiser:
             constraints.append(power_in == power_out)
 
         # Objective function
+        # Common thresholds for all modes
+        LOW_EXPORT_THRESHOLD = 0.05   # Export prices below this ($/kWh) are "not worth it"
+        MIN_WORTHWHILE_EXPORT = 0.10  # Don't discharge unless export > this
+
         if cfg.cost_function == CostFunction.COST_MINIMIZATION:
-            # Minimize: sum of (import_price * grid_import - export_price * grid_export)
-            # Convert W to kWh: power * dt_hours / 1000
+            # Minimize: total electricity cost = import cost - export revenue
+            # Key insight: Discharge to cover load is GOOD (avoids import), but only if
+            # we're not wasting the stored energy that could be used/exported later at better prices
             import_cost = cp.sum(cp.multiply(p_import, grid_import)) * dt_hours / 1000
             export_revenue = cp.sum(cp.multiply(p_export, grid_export)) * dt_hours / 1000
 
-            # Penalize EXPORT (not discharge) when export prices are low
-            # Discharge to cover load is GOOD (saves import cost)
-            # Export at low prices is BAD (wasting stored energy)
-            MIN_WORTHWHILE_EXPORT = 0.15  # Only export if price > $0.15/kWh
-            low_export_penalty = np.where(p_export < MIN_WORTHWHILE_EXPORT, 1.0, 0)  # $1/kWh penalty
+            # Penalize grid export when prices are very low (wasting stored energy)
+            low_export_penalty = np.where(p_export < MIN_WORTHWHILE_EXPORT, 2.0, 0)
             wasteful_export_cost = cp.sum(cp.multiply(low_export_penalty, grid_export)) * dt_hours / 1000
 
-            objective = cp.Minimize(import_cost - export_revenue + wasteful_export_cost)
+            # Also add small discharge penalty when export prices are near-zero
+            # This prevents "use battery now to avoid import" when prices are HIGH
+            # because the battery could have been used/exported more profitably later
+            # Penalty scales with how bad the export price is
+            discharge_penalty_weights = np.where(p_export <= LOW_EXPORT_THRESHOLD, 0.5, 0)
+            discharge_penalty = cp.sum(cp.multiply(discharge_penalty_weights, discharge)) * dt_hours / 1000
+
+            # Also discourage charging when import prices are high (above average)
+            avg_import = np.mean(p_import)
+            high_price_charge_penalty = np.where(p_import > avg_import * 1.2, 0.3, 0)
+            expensive_charge_cost = cp.sum(cp.multiply(high_price_charge_penalty, charge)) * dt_hours / 1000
+
+            objective = cp.Minimize(
+                import_cost - export_revenue + wasteful_export_cost +
+                discharge_penalty + expensive_charge_cost
+            )
 
         elif cfg.cost_function == CostFunction.PROFIT_MAXIMIZATION:
             # Maximize: export revenue - import cost
+            # BUT: Don't discharge when we get nothing for it (export price near zero)
             import_cost = cp.sum(cp.multiply(p_import, grid_import)) * dt_hours / 1000
             export_revenue = cp.sum(cp.multiply(p_export, grid_export)) * dt_hours / 1000
-            objective = cp.Maximize(export_revenue - import_cost)
+
+            # Heavy penalty for discharge when export prices are low
+            # This prevents the optimizer from "wasting" battery at $0 export
+            discharge_penalty_weights = np.where(p_export <= LOW_EXPORT_THRESHOLD, 5.0, 0)
+            wasteful_discharge_penalty = cp.sum(cp.multiply(discharge_penalty_weights, discharge)) * dt_hours / 1000
+
+            # Also penalize grid export at very low prices
+            low_export_penalty = np.where(p_export < MIN_WORTHWHILE_EXPORT, 2.0, 0)
+            wasteful_export_cost = cp.sum(cp.multiply(low_export_penalty, grid_export)) * dt_hours / 1000
+
+            # Maximize profit = export_revenue - import_cost - penalties
+            # (converted to minimize negative profit)
+            objective = cp.Minimize(
+                import_cost - export_revenue + wasteful_discharge_penalty + wasteful_export_cost
+            )
 
         else:  # SELF_CONSUMPTION
             # Maximize solar self-consumption while:
             # 1. Allowing (encouraging) charging from FREE electricity
             # 2. Avoiding grid imports when electricity costs money
             # 3. NOT discharging/exporting when export prices are low (don't waste battery)
-            #
-            # Strategy: Use cost minimization as base, add penalties for wasteful behavior
             FREE_THRESHOLD = 0.01  # Prices below this ($/kWh) are considered "free"
-            LOW_EXPORT_THRESHOLD = 0.05  # Export prices below this are "not worth it"
 
             # For free periods: no import penalty, encourage charging by giving credit
             # For paid periods: penalize imports to encourage self-consumption
             import_penalty_weights = np.where(p_import <= FREE_THRESHOLD, 0, 50)
-            charge_incentive_weights = np.where(p_import <= FREE_THRESHOLD, 0.1, 0)  # Incentive to charge during free
+            charge_incentive_weights = np.where(p_import <= FREE_THRESHOLD, 0.1, 0)
 
             # Penalize discharging when export prices are low (don't waste stored energy)
             # High penalty when export is $0 or very low - never discharge for nothing

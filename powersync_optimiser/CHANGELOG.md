@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.21
+
+- Fixed profit maximization discharging at $0 export price
+- Fixed cost minimization charging at high import prices
+- Added discharge penalty when export prices are near-zero (all modes)
+- Added charge penalty when import prices are above average (cost mode)
+
 ## 1.0.20
 
 - Removed armv7 support (cvxpy/highspy lack pre-built wheels for 32-bit ARM)
