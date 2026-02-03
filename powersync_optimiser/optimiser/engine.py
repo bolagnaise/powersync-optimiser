@@ -302,9 +302,20 @@ class BatteryOptimiser:
 
         # SOC bounds
         min_soc = max(cfg.min_soc, cfg.backup_reserve)
-        for t in range(n_intervals + 1):
-            constraints.append(soc[t] >= min_soc)
-            constraints.append(soc[t] <= cfg.max_soc)
+        # Allow initial SOC below reserve (can't change the past), but enforce for future
+        # Only enforce min_soc for t > 0 if initial SOC is below reserve
+        if initial_soc < min_soc:
+            # Battery is below reserve - allow t=0 at current level, enforce min for future
+            constraints.append(soc[0] >= initial_soc - 0.01)  # Allow small tolerance
+            constraints.append(soc[0] <= cfg.max_soc)
+            for t in range(1, n_intervals + 1):
+                constraints.append(soc[t] >= min_soc)
+                constraints.append(soc[t] <= cfg.max_soc)
+        else:
+            # Normal case - enforce min_soc for all time periods
+            for t in range(n_intervals + 1):
+                constraints.append(soc[t] >= min_soc)
+                constraints.append(soc[t] <= cfg.max_soc)
 
         # Target end SOC if specified
         if cfg.target_end_soc is not None:
@@ -341,10 +352,24 @@ class BatteryOptimiser:
             objective = cp.Maximize(export_revenue - import_cost)
 
         else:  # SELF_CONSUMPTION
-            # Minimize grid import (high weight) with small cost consideration
-            import_penalty = cp.sum(grid_import) * 1000  # Heavy penalty on imports
+            # Maximize solar self-consumption while:
+            # 1. Allowing (encouraging) charging from FREE electricity
+            # 2. Avoiding grid imports when electricity costs money
+            #
+            # Strategy: Use cost minimization as base, but add penalty for paid imports
+            FREE_THRESHOLD = 0.01  # Prices below this ($/kWh) are considered "free"
+
+            # For free periods: no import penalty, encourage charging by giving credit
+            # For paid periods: penalize imports to encourage self-consumption
+            import_penalty_weights = np.where(p_import <= FREE_THRESHOLD, 0, 50)
+            charge_incentive_weights = np.where(p_import <= FREE_THRESHOLD, 0.1, 0)  # Incentive to charge during free
+
+            # Objective: minimize (paid imports) - (free charging benefit) + actual cost
+            import_penalty = cp.sum(cp.multiply(import_penalty_weights, grid_import)) * dt_hours / 1000
+            charge_incentive = cp.sum(cp.multiply(charge_incentive_weights, charge)) * dt_hours / 1000
             import_cost = cp.sum(cp.multiply(p_import, grid_import)) * dt_hours / 1000
-            objective = cp.Minimize(import_penalty + import_cost)
+
+            objective = cp.Minimize(import_penalty + import_cost - charge_incentive)
 
         # Add cycle cost if specified
         if cfg.cycle_cost > 0:
