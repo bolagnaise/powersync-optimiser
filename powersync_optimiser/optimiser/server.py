@@ -58,7 +58,7 @@ CORS(app)
 optimiser = BatteryOptimiser()
 
 # Configuration from environment
-OPTIMIZATION_INTERVAL = int(os.environ.get("OPTIMIZATION_INTERVAL", 30))
+OPTIMIZATION_INTERVAL = int(os.environ.get("OPTIMIZATION_INTERVAL", 5))
 HORIZON_HOURS = int(os.environ.get("HORIZON_HOURS", 48))
 DEFAULT_COST_FUNCTION = os.environ.get("DEFAULT_COST_FUNCTION", "cost")
 
@@ -108,7 +108,7 @@ def optimize():
             "backup_reserve": 0.2
         },
         "cost_function": "cost",  # cost|profit|self_consumption
-        "interval_minutes": 30,
+        "interval_minutes": 5,
         "provider_config": {  # Optional
             "export_boost_enabled": false,
             "export_price_offset": 0,

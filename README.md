@@ -34,7 +34,7 @@ The add-on works out of the box with sensible defaults. Optional configuration:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `log_level` | `info` | Logging level (debug, info, warning, error) |
-| `optimization_interval` | `30` | Time interval in minutes (15-120) |
+| `optimization_interval` | `5` | Time interval in minutes (5-120) |
 | `horizon_hours` | `48` | Optimization horizon in hours (24-72) |
 | `default_cost_function` | `cost` | Default objective (cost, profit, self_consumption) |
 
