@@ -316,8 +316,21 @@ class BatteryOptimiser:
         # Time interval in hours
         dt_hours = cfg.interval_minutes / 60.0
 
-        # Capacity in Wh
+        # Capacity in Wh - validate and use sensible defaults
         capacity_wh = cfg.battery_capacity_wh
+        if capacity_wh <= 0 or np.isnan(capacity_wh) or np.isinf(capacity_wh):
+            _LOGGER.warning(f"Invalid battery capacity {capacity_wh}, using default 13500Wh")
+            capacity_wh = 13500.0
+
+        # Validate power limits
+        max_charge = cfg.max_charge_w
+        max_discharge = cfg.max_discharge_w
+        if max_charge <= 0 or np.isnan(max_charge) or np.isinf(max_charge):
+            _LOGGER.warning(f"Invalid max_charge_w {max_charge}, using default 5000W")
+            max_charge = 5000.0
+        if max_discharge <= 0 or np.isnan(max_discharge) or np.isinf(max_discharge):
+            _LOGGER.warning(f"Invalid max_discharge_w {max_discharge}, using default 5000W")
+            max_discharge = 5000.0
 
         # Decision variables
         charge = cp.Variable(n_intervals, nonneg=True)      # Charge power (W)
@@ -359,9 +372,9 @@ class BatteryOptimiser:
         if cfg.target_end_soc is not None:
             constraints.append(soc[n_intervals] >= cfg.target_end_soc)
 
-        # Power limits
-        constraints.append(charge <= cfg.max_charge_w)
-        constraints.append(discharge <= cfg.max_discharge_w)
+        # Power limits (using validated values)
+        constraints.append(charge <= max_charge)
+        constraints.append(discharge <= max_discharge)
 
         # Grid limits if specified
         if cfg.max_grid_import_w is not None:
