@@ -113,7 +113,9 @@ class OptimizationResult:
         for i in range(min(count, len(self.charge_schedule_w))):
             action = self.get_action_at_index(i)
             action["timestamp"] = self.timestamps[i].isoformat() if i < len(self.timestamps) else None
-            action["soc"] = self.soc_trajectory[i] if i < len(self.soc_trajectory) else None
+            # soc_trajectory has n+1 elements: [initial, after_interval_0, after_interval_1, ...]
+            # Show SOC AFTER this action completes, not before
+            action["soc"] = self.soc_trajectory[i + 1] if (i + 1) < len(self.soc_trajectory) else None
             actions.append(action)
         return actions
 
