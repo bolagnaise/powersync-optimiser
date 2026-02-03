@@ -353,14 +353,30 @@ class BatteryOptimiser:
 
         # SOC bounds
         min_soc = max(cfg.min_soc, cfg.backup_reserve)
-        # Allow initial SOC below reserve (can't change the past), but enforce for future
-        # Only enforce min_soc for t > 0 if initial SOC is below reserve
+
+        # Handle case where initial SOC is below reserve
         if initial_soc < min_soc:
-            # Battery is below reserve - allow t=0 at current level, enforce min for future
-            constraints.append(soc[0] >= initial_soc - 0.01)  # Allow small tolerance
-            constraints.append(soc[0] <= cfg.max_soc)
-            for t in range(1, n_intervals + 1):
-                constraints.append(soc[t] >= min_soc)
+            # Calculate how many intervals needed to charge from current SOC to min_soc
+            # at maximum charge rate
+            soc_deficit = min_soc - initial_soc
+            energy_deficit_wh = soc_deficit * capacity_wh
+            # Max energy per interval (accounting for efficiency)
+            max_energy_per_interval = max_charge * cfg.charge_efficiency * dt_hours
+            intervals_to_recover = int(np.ceil(energy_deficit_wh / max_energy_per_interval)) if max_energy_per_interval > 0 else 1
+
+            _LOGGER.debug(f"SOC below reserve: {initial_soc:.1%} < {min_soc:.1%}, need {intervals_to_recover} intervals to recover")
+
+            # Allow gradual recovery: linearly interpolate min SOC from current to reserve
+            for t in range(n_intervals + 1):
+                if t <= intervals_to_recover:
+                    # During recovery period: allow linear ramp from initial to min_soc
+                    # with some margin for flexibility
+                    recovery_progress = t / max(intervals_to_recover, 1)
+                    min_soc_at_t = initial_soc + (min_soc - initial_soc) * recovery_progress * 0.8  # 80% of ideal recovery
+                    constraints.append(soc[t] >= min_soc_at_t - 0.02)  # Small tolerance
+                else:
+                    # After recovery period: enforce normal min_soc
+                    constraints.append(soc[t] >= min_soc)
                 constraints.append(soc[t] <= cfg.max_soc)
         else:
             # Normal case - enforce min_soc for all time periods
