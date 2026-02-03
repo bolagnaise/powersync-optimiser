@@ -410,7 +410,18 @@ class BatteryOptimiser:
             # Convert W to kWh: power * dt_hours / 1000
             import_cost = cp.sum(cp.multiply(p_import, grid_import)) * dt_hours / 1000
             export_revenue = cp.sum(cp.multiply(p_export, grid_export)) * dt_hours / 1000
-            objective = cp.Minimize(import_cost - export_revenue)
+
+            # Add small penalty for battery cycling to preserve battery when prices are equal
+            # This prevents unnecessary discharge when import is free/cheap
+            # Also penalize exporting at $0 (wasting stored energy)
+            LOW_EXPORT_THRESHOLD = 0.05  # Don't discharge to export below this
+            wasteful_export_penalty = np.where(p_export <= LOW_EXPORT_THRESHOLD, 0.5, 0)  # Small penalty
+            discharge_penalty = cp.sum(cp.multiply(wasteful_export_penalty, discharge)) * dt_hours / 1000
+
+            # Small cycling penalty (0.01 $/kWh) to prefer grid over battery when equal
+            cycling_penalty = 0.01 * cp.sum(discharge + charge) * dt_hours / 1000
+
+            objective = cp.Minimize(import_cost - export_revenue + discharge_penalty + cycling_penalty)
 
         elif cfg.cost_function == CostFunction.PROFIT_MAXIMIZATION:
             # Maximize: export revenue - import cost
