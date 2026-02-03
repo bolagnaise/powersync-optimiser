@@ -7,7 +7,6 @@ image: "ghcr.io/bolagnaise/powersync-optimiser-{arch}"
 arch:
   - amd64
   - aarch64
-  - armv7
 startup: "application"
 boot: "auto"
 init: false
