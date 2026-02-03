@@ -222,11 +222,20 @@ def optimize():
             "status": result.status,
             "schedule": {
                 "timestamps": [t.isoformat() for t in result.timestamps],
+                # Legacy fields (backward compatible)
                 "charge_w": result.charge_schedule_w,
                 "discharge_w": result.discharge_schedule_w,
                 "grid_import_w": result.grid_import_w,
                 "grid_export_w": result.grid_export_w,
                 "soc_trajectory": result.soc_trajectory,
+                # New detailed breakdown
+                "battery_consume_w": result.battery_consume_w,
+                "battery_export_w": result.battery_export_w,
+                "solar_to_load_w": result.solar_to_load_w,
+                "solar_to_battery_w": result.solar_to_battery_w,
+                "solar_to_grid_w": result.solar_to_grid_w,
+                "grid_to_load_w": result.grid_to_load_w,
+                "grid_to_battery_w": result.grid_to_battery_w,
             },
             "summary": {
                 "total_cost": result.total_cost,
@@ -236,6 +245,11 @@ def optimize():
                 "total_discharge_kwh": result.total_discharge_kwh,
                 "average_import_price": result.average_import_price,
                 "average_export_price": result.average_export_price,
+                # New detailed metrics
+                "total_battery_consume_kwh": result.total_battery_consume_kwh,
+                "total_battery_export_kwh": result.total_battery_export_kwh,
+                "total_solar_consumed_kwh": result.total_solar_consumed_kwh,
+                "total_solar_exported_kwh": result.total_solar_exported_kwh,
             },
         })
 

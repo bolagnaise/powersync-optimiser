@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.22
+
+- Refactored LP model to explicitly track power flows
+- New terminology: "consume" (battery→load) vs "export" (battery→grid)
+- Split variables: solar_to_load, solar_to_battery, solar_to_grid, battery_to_load, battery_to_grid, grid_to_load, grid_to_battery
+- More accurate penalties: only battery_to_grid is penalized at low export prices, not battery_to_load
+- New detailed metrics: total_battery_consume_kwh, total_battery_export_kwh, total_solar_consumed_kwh, total_solar_exported_kwh
+- Backward compatible: legacy fields (charge_w, discharge_w) still provided
+
 ## 1.0.21
 
 - Fixed profit maximization discharging at $0 export price
