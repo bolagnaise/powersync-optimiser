@@ -269,11 +269,49 @@ class BatteryOptimiser:
         """Solve the LP optimization problem using CVXPY."""
         import cvxpy as cp
 
-        # Convert to numpy arrays
-        p_import = np.array(prices_import)  # $/kWh
-        p_export = np.array(prices_export)  # $/kWh
-        solar = np.array(solar_forecast)    # W
-        load = np.array(load_forecast)      # W
+        # Convert to numpy arrays and validate
+        p_import = np.array(prices_import, dtype=float)  # $/kWh
+        p_export = np.array(prices_export, dtype=float)  # $/kWh
+        solar = np.array(solar_forecast, dtype=float)    # W
+        load = np.array(load_forecast, dtype=float)      # W
+
+        # Check for NaN/Inf values
+        for name, arr in [("prices_import", p_import), ("prices_export", p_export),
+                          ("solar", solar), ("load", load)]:
+            if np.any(np.isnan(arr)) or np.any(np.isinf(arr)):
+                nan_count = np.sum(np.isnan(arr))
+                inf_count = np.sum(np.isinf(arr))
+                _LOGGER.warning(f"Invalid values in {name}: {nan_count} NaN, {inf_count} Inf")
+                # Replace NaN/Inf with reasonable defaults
+                if name == "prices_import":
+                    arr = np.nan_to_num(arr, nan=0.30, posinf=1.0, neginf=0.0)
+                elif name == "prices_export":
+                    arr = np.nan_to_num(arr, nan=0.05, posinf=1.0, neginf=0.0)
+                else:
+                    arr = np.nan_to_num(arr, nan=0.0, posinf=10000.0, neginf=0.0)
+                # Update the array reference
+                if name == "prices_import":
+                    p_import = arr
+                elif name == "prices_export":
+                    p_export = arr
+                elif name == "solar":
+                    solar = arr
+                else:
+                    load = arr
+
+        # Clamp negative values (shouldn't have negative power/prices)
+        solar = np.maximum(solar, 0)
+        load = np.maximum(load, 0)
+        p_import = np.maximum(p_import, -1.0)  # Allow small negative (free) but not extreme
+        p_export = np.maximum(p_export, -1.0)
+
+        # Log data summary for debugging
+        _LOGGER.debug(f"Optimization inputs: intervals={n_intervals}, initial_soc={initial_soc:.2%}")
+        _LOGGER.debug(f"  prices_import: min={p_import.min():.3f}, max={p_import.max():.3f}, mean={p_import.mean():.3f}")
+        _LOGGER.debug(f"  prices_export: min={p_export.min():.3f}, max={p_export.max():.3f}, mean={p_export.mean():.3f}")
+        _LOGGER.debug(f"  solar: min={solar.min():.0f}W, max={solar.max():.0f}W, sum={solar.sum()/1000:.1f}kWh")
+        _LOGGER.debug(f"  load: min={load.min():.0f}W, max={load.max():.0f}W, sum={load.sum()/1000:.1f}kWh")
+        _LOGGER.debug(f"  battery: capacity={cfg.battery_capacity_wh}Wh, reserve={cfg.backup_reserve:.0%}")
 
         # Time interval in hours
         dt_hours = cfg.interval_minutes / 60.0
@@ -398,6 +436,21 @@ class BatteryOptimiser:
 
         # Check solution status
         if problem.status not in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]:
+            # Log diagnostic info for infeasible problems
+            _LOGGER.warning(f"Optimization failed with status: {problem.status}")
+            _LOGGER.warning(f"  Config: capacity={cfg.battery_capacity_wh}Wh, max_charge={cfg.max_charge_w}W, max_discharge={cfg.max_discharge_w}W")
+            _LOGGER.warning(f"  Config: backup_reserve={cfg.backup_reserve:.0%}, min_soc={cfg.min_soc:.0%}, max_soc={cfg.max_soc:.0%}")
+            _LOGGER.warning(f"  Initial SOC: {initial_soc:.2%}, min_soc_effective={max(cfg.min_soc, cfg.backup_reserve):.0%}")
+            _LOGGER.warning(f"  Data ranges: prices=[{p_import.min():.3f}, {p_import.max():.3f}], solar=[{solar.min():.0f}, {solar.max():.0f}], load=[{load.min():.0f}, {load.max():.0f}]")
+
+            # Check for potential issues
+            if initial_soc < max(cfg.min_soc, cfg.backup_reserve):
+                _LOGGER.warning(f"  ISSUE: Initial SOC {initial_soc:.2%} is below min_soc {max(cfg.min_soc, cfg.backup_reserve):.0%}")
+            if np.any(load > cfg.max_discharge_w + cfg.max_grid_import_w if cfg.max_grid_import_w else load > 100000):
+                _LOGGER.warning(f"  ISSUE: Some load values may exceed available power sources")
+            if solar.sum() == 0 and load.sum() > 0:
+                _LOGGER.warning(f"  NOTE: No solar generation, all load must come from battery or grid")
+
             return OptimizationResult(
                 success=False,
                 status=f"Solver status: {problem.status}",
