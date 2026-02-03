@@ -411,17 +411,15 @@ class BatteryOptimiser:
             import_cost = cp.sum(cp.multiply(p_import, grid_import)) * dt_hours / 1000
             export_revenue = cp.sum(cp.multiply(p_export, grid_export)) * dt_hours / 1000
 
-            # Add small penalty for battery cycling to preserve battery when prices are equal
-            # This prevents unnecessary discharge when import is free/cheap
-            # Also penalize exporting at $0 (wasting stored energy)
-            LOW_EXPORT_THRESHOLD = 0.05  # Don't discharge to export below this
-            wasteful_export_penalty = np.where(p_export <= LOW_EXPORT_THRESHOLD, 0.5, 0)  # Small penalty
-            discharge_penalty = cp.sum(cp.multiply(wasteful_export_penalty, discharge)) * dt_hours / 1000
+            # Battery degradation cost - cycling batteries costs money in wear
+            # Typical Li-ion battery: ~$0.05-0.15/kWh for degradation
+            # This prevents excessive arbitrage (charge free → export cheap)
+            BATTERY_CYCLE_COST = 0.10  # $0.10/kWh round-trip degradation cost
+            cycling_cost = BATTERY_CYCLE_COST * cp.sum(discharge) * dt_hours / 1000
 
-            # Small cycling penalty (0.01 $/kWh) to prefer grid over battery when equal
-            cycling_penalty = 0.01 * cp.sum(discharge + charge) * dt_hours / 1000
-
-            objective = cp.Minimize(import_cost - export_revenue + discharge_penalty + cycling_penalty)
+            # Only export if export price covers degradation cost
+            # Export at $0.10 with $0.10 degradation = no profit, so don't do it
+            objective = cp.Minimize(import_cost - export_revenue + cycling_cost)
 
         elif cfg.cost_function == CostFunction.PROFIT_MAXIMIZATION:
             # Maximize: export revenue - import cost

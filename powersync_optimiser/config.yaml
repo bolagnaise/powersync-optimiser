@@ -1,6 +1,6 @@
 name: "PowerSync Optimiser"
 description: "ML-based battery optimization engine for PowerSync"
-version: "1.0.14"
+version: "1.0.15"
 slug: "powersync_optimiser"
 url: "https://github.com/bolagnaise/powersync-optimiser"
 image: "ghcr.io/bolagnaise/powersync-optimiser-{arch}"
