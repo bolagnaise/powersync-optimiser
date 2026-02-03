@@ -52,7 +52,7 @@ optimiser = BatteryOptimiser()
 
 # Configuration from environment
 OPTIMIZATION_INTERVAL = int(os.environ.get("OPTIMIZATION_INTERVAL", 5))
-HORIZON_HOURS = int(os.environ.get("HORIZON_HOURS", 24))
+HORIZON_HOURS = int(os.environ.get("HORIZON_HOURS", 48))
 DEFAULT_COST_FUNCTION = os.environ.get("DEFAULT_COST_FUNCTION", "self_consumption")
 
 

@@ -1,6 +1,6 @@
 name: "PowerSync Optimiser"
 description: "ML-based battery optimization engine for PowerSync"
-version: "1.0.18"
+version: "1.0.19"
 slug: "powersync_optimiser"
 url: "https://github.com/bolagnaise/powersync-optimiser"
 image: "ghcr.io/bolagnaise/powersync-optimiser-{arch}"
@@ -25,10 +25,10 @@ ports_description:
 options:
   log_level: "info"
   optimization_interval: 5
-  horizon_hours: 24
+  horizon_hours: 48
   default_cost_function: "self_consumption"
 schema:
   log_level: "list(debug|info|warning|error)"
   optimization_interval: "int(5,120)"
-  horizon_hours: "int(12,48)"
+  horizon_hours: "int(24,72)"
   default_cost_function: "list(cost|profit|self_consumption)"
