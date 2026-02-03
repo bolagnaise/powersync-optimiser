@@ -6,7 +6,7 @@ battery optimization schedules.
 """
 import logging
 import os
-import signal
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, request, jsonify
@@ -18,36 +18,27 @@ from .engine import BatteryOptimiser, OptimizationConfig, CostFunction
 # Request timeout handling
 REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", 60))  # 60 second default
 
-
-class TimeoutError(Exception):
-    """Raised when a request times out."""
-    pass
-
-
-def timeout_handler(signum, frame):
-    """Signal handler for request timeout."""
-    raise TimeoutError("Request timed out")
+# Thread pool for timeout handling (works in Flask worker threads unlike signals)
+_timeout_executor = ThreadPoolExecutor(max_workers=2)
 
 
 def with_timeout(timeout_seconds):
-    """Decorator to add timeout to a function."""
+    """
+    Decorator to add timeout to a function.
+
+    Uses concurrent.futures instead of signals to work in Flask worker threads.
+    """
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # Set the signal handler
-            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(timeout_seconds)
+            future = _timeout_executor.submit(func, *args, **kwargs)
             try:
-                result = func(*args, **kwargs)
-            except TimeoutError:
+                return future.result(timeout=timeout_seconds)
+            except FuturesTimeoutError:
                 return jsonify({
                     "success": False,
                     "error": f"Optimization timed out after {timeout_seconds} seconds",
                 }), 504
-            finally:
-                signal.alarm(0)  # Cancel the alarm
-                signal.signal(signal.SIGALRM, old_handler)
-            return result
         return wrapper
     return decorator
 
