@@ -422,21 +422,28 @@ class BatteryOptimiser:
             # Maximize solar self-consumption while:
             # 1. Allowing (encouraging) charging from FREE electricity
             # 2. Avoiding grid imports when electricity costs money
+            # 3. NOT discharging/exporting when export prices are low (don't waste battery)
             #
-            # Strategy: Use cost minimization as base, but add penalty for paid imports
+            # Strategy: Use cost minimization as base, add penalties for wasteful behavior
             FREE_THRESHOLD = 0.01  # Prices below this ($/kWh) are considered "free"
+            LOW_EXPORT_THRESHOLD = 0.05  # Export prices below this are "not worth it"
 
             # For free periods: no import penalty, encourage charging by giving credit
             # For paid periods: penalize imports to encourage self-consumption
             import_penalty_weights = np.where(p_import <= FREE_THRESHOLD, 0, 50)
             charge_incentive_weights = np.where(p_import <= FREE_THRESHOLD, 0.1, 0)  # Incentive to charge during free
 
-            # Objective: minimize (paid imports) - (free charging benefit) + actual cost
+            # Penalize discharging when export prices are low (don't waste stored energy)
+            # High penalty when export is $0 or very low - never discharge for nothing
+            discharge_penalty_weights = np.where(p_export <= LOW_EXPORT_THRESHOLD, 100, 0)
+
+            # Objective: minimize (paid imports) + (wasteful discharge) - (free charging benefit) + actual cost
             import_penalty = cp.sum(cp.multiply(import_penalty_weights, grid_import)) * dt_hours / 1000
+            discharge_penalty = cp.sum(cp.multiply(discharge_penalty_weights, discharge)) * dt_hours / 1000
             charge_incentive = cp.sum(cp.multiply(charge_incentive_weights, charge)) * dt_hours / 1000
             import_cost = cp.sum(cp.multiply(p_import, grid_import)) * dt_hours / 1000
 
-            objective = cp.Minimize(import_penalty + import_cost - charge_incentive)
+            objective = cp.Minimize(import_penalty + discharge_penalty + import_cost - charge_incentive)
 
         # Add cycle cost if specified
         if cfg.cycle_cost > 0:
