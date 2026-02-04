@@ -376,6 +376,22 @@ class BatteryOptimiser:
         p_import = np.maximum(p_import, -1.0)
         p_export = np.maximum(p_export, -1.0)
 
+        # CRITICAL: Validate and fix initial_soc to prevent infeasible constraints
+        if np.isnan(initial_soc) or np.isinf(initial_soc):
+            _LOGGER.warning(f"Invalid initial_soc: {initial_soc}, using 0.5")
+            initial_soc = 0.5
+        initial_soc = float(np.clip(initial_soc, 0.0, 1.0))
+
+        # Ensure initial_soc doesn't exceed max_soc (would make problem infeasible)
+        if initial_soc > cfg.max_soc:
+            _LOGGER.warning(f"initial_soc ({initial_soc:.2%}) > max_soc ({cfg.max_soc:.2%}), clamping")
+            initial_soc = cfg.max_soc
+
+        # Ensure initial_soc isn't below backup_reserve (unless we allow recovery)
+        min_soc_target = max(cfg.min_soc, cfg.backup_reserve)
+        if initial_soc < min_soc_target:
+            _LOGGER.info(f"initial_soc ({initial_soc:.2%}) < min_soc ({min_soc_target:.2%}), will allow recovery")
+
         _LOGGER.debug(f"Optimization inputs: intervals={n_intervals}, initial_soc={initial_soc:.2%}, cost_function={cfg.cost_function.value}")
         _LOGGER.debug(f"  prices_import: min={p_import.min():.3f}, max={p_import.max():.3f}, mean={p_import.mean():.3f}")
         _LOGGER.debug(f"  prices_export: min={p_export.min():.3f}, max={p_export.max():.3f}, mean={p_export.mean():.3f}")
@@ -503,6 +519,13 @@ class BatteryOptimiser:
                 # else: price <= 0, allow charging (it's free or they pay us!)
             _LOGGER.info("Self-consumption mode: grid charging only when price <= 0")
 
+        # CRITICAL: Prevent simultaneous grid charging AND battery export
+        # This is physically wasteful (round-trip losses) and should never happen
+        # We use a "big-M" style constraint to enforce mutual exclusivity
+        # If grid_to_battery > 0, then battery_to_grid must be 0 (and vice versa)
+        # Since we want LP (not MILP), we add a very large penalty instead
+        # This is handled in the objective function below
+
         # ========================================
         # OBJECTIVE FUNCTION
         # ========================================
@@ -514,6 +537,20 @@ class BatteryOptimiser:
         # Cost components (common to all objectives)
         import_cost = cp.sum(cp.multiply(p_import, grid_import)) * dt_hours / 1000
         export_revenue = cp.sum(cp.multiply(p_export, grid_export)) * dt_hours / 1000
+
+        # CRITICAL: Penalty for simultaneous grid charging AND battery export
+        # This should NEVER happen - it means buying from grid, storing (losing 10%),
+        # then immediately discharging to grid (losing another 10%) - always a net loss
+        # unless prices are extremely skewed. Even then, it wastes battery cycles.
+        # We penalize the minimum of grid_to_battery and battery_to_grid to
+        # discourage having both non-zero.
+        # Using element-wise minimum: min(a,b) = 0.5*(a+b - |a-b|) but cvxpy doesn't support abs on variables
+        # Instead, we just add a penalty on both when they're both non-zero
+        # Since we can't detect "both non-zero" in LP, we use a heuristic penalty
+        SIMULTANEOUS_CHARGE_EXPORT_PENALTY = 100.0  # $/kWh penalty
+        simultaneous_penalty = SIMULTANEOUS_CHARGE_EXPORT_PENALTY * cp.sum(
+            cp.minimum(grid_to_battery, battery_to_grid)
+        ) * dt_hours / 1000
 
         if cfg.cost_function == CostFunction.COST_MINIMIZATION:
             # Minimize electricity cost
@@ -534,7 +571,8 @@ class BatteryOptimiser:
 
             objective = cp.Minimize(
                 import_cost - export_revenue +
-                battery_export_penalty + solar_export_penalty + expensive_charge_penalty
+                battery_export_penalty + solar_export_penalty + expensive_charge_penalty +
+                simultaneous_penalty
             )
 
         elif cfg.cost_function == CostFunction.PROFIT_MAXIMIZATION:
@@ -552,7 +590,8 @@ class BatteryOptimiser:
 
             objective = cp.Minimize(
                 import_cost - export_revenue +
-                battery_export_penalty + solar_export_penalty
+                battery_export_penalty + solar_export_penalty +
+                simultaneous_penalty
             )
 
         else:  # SELF_CONSUMPTION
@@ -579,7 +618,7 @@ class BatteryOptimiser:
 
             objective = cp.Minimize(
                 import_penalty + battery_export_penalty + solar_export_penalty +
-                import_cost - charge_incentive
+                import_cost - charge_incentive + simultaneous_penalty
             )
 
         # Cycle cost
@@ -617,6 +656,15 @@ class BatteryOptimiser:
         # EXTRACT RESULTS
         # ========================================
 
+        # Check for None values (solver didn't find solution)
+        if solar_to_load.value is None or battery_to_load.value is None:
+            _LOGGER.error("Solver returned None values - optimization failed")
+            return OptimizationResult(
+                success=False,
+                status="Solver returned no solution",
+                solver_name=solver_name,
+            )
+
         # Detailed flow results
         solar_to_load_vals = np.maximum(solar_to_load.value, 0).tolist()
         solar_to_battery_vals = np.maximum(solar_to_battery.value, 0).tolist()
@@ -625,6 +673,21 @@ class BatteryOptimiser:
         battery_to_grid_vals = np.maximum(battery_to_grid.value, 0).tolist()
         grid_to_load_vals = np.maximum(grid_to_load.value, 0).tolist()
         grid_to_battery_vals = np.maximum(grid_to_battery.value, 0).tolist()
+
+        # SANITY CHECK: Detect impossible simultaneous grid charge and battery export
+        # If both happen at same interval, zero out the smaller one
+        for t in range(n_intervals):
+            gtb = grid_to_battery_vals[t]
+            btg = battery_to_grid_vals[t]
+            if gtb > 10 and btg > 10:  # Both non-trivial
+                _LOGGER.warning(f"Interval {t}: Impossible state - grid_to_battery={gtb:.0f}W AND battery_to_grid={btg:.0f}W. Correcting.")
+                # Keep the larger one, zero the smaller
+                if gtb > btg:
+                    battery_to_grid_vals[t] = 0
+                    # Adjust solar_to_grid to compensate if needed
+                else:
+                    grid_to_battery_vals[t] = 0
+                    # Adjust grid_to_load to compensate if needed
 
         # Aggregate values (backward compatible)
         charge_w = [s + g for s, g in zip(solar_to_battery_vals, grid_to_battery_vals)]

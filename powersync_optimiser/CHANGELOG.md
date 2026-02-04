@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.0.25
+
+- **CRITICAL FIX**: Prevent impossible simultaneous charge AND export states
+- Added large penalty for having both grid_to_battery AND battery_to_grid non-zero
+- Added input validation to prevent infeasible LP problems (SOC > max, NaN values)
+- Added sanity check in results to detect and correct impossible states
+- Fixes "unbounded" optimization failures reported by some users
+
+## 1.0.24
+
+- Self-consumption mode: allow grid charging when electricity price is free or negative
+- Fixed get_next_actions() to filter by current time (not showing stale past intervals)
+
+## 1.0.23
+
+- Fixed tariff lookup for time-keyed formats (Amber/AEMO)
+
 ## 1.0.22
 
 - Refactored LP model to explicitly track power flows
